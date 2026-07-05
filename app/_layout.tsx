@@ -1,43 +1,31 @@
-import { useEffect } from 'react'
-import { Stack, router } from 'expo-router'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { StatusBar } from 'expo-status-bar'
-import * as SplashScreen from 'expo-splash-screen'
-import { useAuthStore } from '../src/store/auth.store'
+import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useColorScheme } from 'react-native';
+import { LanguageProvider } from '../src/lib/LanguageContext';
 
-SplashScreen.preventAutoHideAsync()
-
-const qc = new QueryClient({
+const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 1, staleTime: 5 * 60 * 1000, refetchOnWindowFocus: false },
+    queries: { staleTime: 1000 * 60 * 2, retry: 1 },
   },
-})
-
-function Nav() {
-  const { isAuthenticated, isLoading, load } = useAuthStore()
-
-  useEffect(() => { load() }, [])
-
-  useEffect(() => {
-    if (!isLoading) {
-      SplashScreen.hideAsync()
-      router.replace(isAuthenticated ? '/(tabs)/dashboard' : '/(auth)/login')
-    }
-  }, [isAuthenticated, isLoading])
-
-  return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(tabs)" />
-    </Stack>
-  )
-}
+});
 
 export default function RootLayout() {
+  const colorScheme = useColorScheme();
+
   return (
-    <QueryClientProvider client={qc}>
-      <StatusBar style="light" />
-      <Nav />
-    </QueryClientProvider>
-  )
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <QueryClientProvider client={queryClient}>
+        <LanguageProvider>
+          <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(tabs)" />
+          </Stack>
+        </LanguageProvider>
+      </QueryClientProvider>
+    </GestureHandlerRootView>
+  );
 }

@@ -1,147 +1,195 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, RefreshControl } from 'react-native'
-import { useState } from 'react'
-import { Ionicons } from '@expo/vector-icons'
-import { useGroups, useMyGroups, useJoinGroup } from '../../src/hooks/useApi'
-import { colors, spacing, radius, shadow } from '../../src/lib/theme'
-import { formatKes } from '../../src/lib/utils'
-
-const TYPE_COLORS: Record<string, { bg: string; text: string }> = {
-  SACCO:             { bg: '#dcfce7', text: '#14532d' },
-  COOPERATIVE:       { bg: '#dbeafe', text: '#1e40af' },
-  BUYING_GROUP:      { bg: '#fef3c7', text: '#92400e' },
-  IRRIGATION_SCHEME: { bg: '#f3f4f6', text: '#374151' },
-}
-
-function GroupCard({ group, isMember }: { group: any; isMember: boolean }) {
-  const join = useJoinGroup()
-  const tc = TYPE_COLORS[group.type] ?? { bg: '#f3f4f6', text: '#374151' }
-
-  return (
-    <View style={[s.card, shadow.sm as any]}>
-      <View style={s.cardTop}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, flex: 1 }}>
-          <View style={s.iconWrap}>
-            <Ionicons name="people" size={20} color={colors.shamba[600]} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={s.groupName}>{group.name}</Text>
-            <Text style={s.groupCounty}>{group.county}</Text>
-          </View>
-        </View>
-        <View style={[s.typeBadge, { backgroundColor: tc.bg }]}>
-          <Text style={[s.typeText, { color: tc.text }]}>{group.type?.replace('_', ' ')}</Text>
-        </View>
-      </View>
-
-      {group.description ? <Text style={s.desc} numberOfLines={2}>{group.description}</Text> : null}
-
-      <View style={s.cardFooter}>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          <Text style={s.meta}>{group._count?.members ?? 0} members</Text>
-          <Text style={s.meta}>·</Text>
-          <Text style={s.meta}>{formatKes(group.totalSavingsKes ?? 0)} saved</Text>
-        </View>
-
-        {!isMember ? (
-          <TouchableOpacity
-            style={[s.joinBtn, join.isPending && { opacity: 0.5 }]}
-            disabled={join.isPending}
-            onPress={() => join.mutate(
-              { id: group.id },
-              {
-                onSuccess: () => Alert.alert('Joined!', `Welcome to ${group.name}`),
-                onError:   (e: any) => Alert.alert('Error', e.response?.data?.error ?? 'Failed to join'),
-              }
-            )}
-          >
-            {join.isPending
-              ? <ActivityIndicator size="small" color={colors.shamba[600]} />
-              : <Text style={s.joinBtnText}>Join</Text>}
-          </TouchableOpacity>
-        ) : (
-          <View style={s.memberBadge}>
-            <Text style={s.memberBadgeText}>Member ✓</Text>
-          </View>
-        )}
-      </View>
-    </View>
-  )
-}
+import { useState } from 'react';
+import {
+  View, Text, FlatList, TouchableOpacity, StyleSheet,
+  Alert, ActivityIndicator, TextInput,
+} from 'react-native';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { groupsApi } from '../../src/api/client';
+import { useTheme } from '../../src/lib/theme';
+import { useLanguage } from '../../src/lib/LanguageContext';
 
 export default function GroupsScreen() {
-  const [refreshing, setRefreshing] = useState(false)
-  const { data: groups, isLoading, refetch } = useGroups()
-  const { data: myGroups } = useMyGroups()
-  const myGroupIds = new Set((myGroups ?? []).map((m: any) => m.groupId))
+  const theme = useTheme();
+  const { t } = useLanguage();
+  const queryClient = useQueryClient();
+  const [myGroupsOnly, setMyGroupsOnly] = useState(false);
+  const [search, setSearch] = useState('');
 
-  async function onRefresh() { setRefreshing(true); await refetch(); setRefreshing(false) }
+  const { data: allGroupsData, isLoading, refetch } = useQuery({
+    queryKey: ['groups'],
+    queryFn: () => groupsApi.getGroups().then((r) => r.data?.data),
+  });
+
+  const { data: myGroupsData } = useQuery({
+    queryKey: ['groups-my'],
+    queryFn: () => groupsApi.getMyGroups().then((r) => r.data?.data),
+  });
+
+  const joinMutation = useMutation({
+    mutationFn: (id: string) => groupsApi.join(id),
+    onSuccess: () => {
+      Alert.alert(t.joinSuccess, t.joinSuccessMsg);
+      queryClient.invalidateQueries({ queryKey: ['groups'] });
+      queryClient.invalidateQueries({ queryKey: ['groups-my'] });
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.error || err.response?.data?.message || t.joinFailed;
+      Alert.alert(t.error, msg);
+    },
+  });
+
+  const allGroups = allGroupsData?.groups || allGroupsData || MOCK_GROUPS;
+  const myGroups = myGroupsData?.groups || myGroupsData || [];
+  const myGroupIds = new Set(myGroups.map((g: any) => g.id));
+
+  const raw = myGroupsOnly ? myGroups : allGroups;
+  const groups = search
+    ? raw.filter((g: any) => g.name?.toLowerCase().includes(search.toLowerCase()))
+    : raw;
+
+  const s = makeStyles(theme);
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.gray[50] }}
-      contentContainerStyle={{ paddingBottom: 40 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.shamba[600]} />}
-    >
+    <View style={s.container}>
       <View style={s.header}>
-        <Text style={s.title}>Farmer Groups</Text>
-        <Text style={s.subtitle}>SACCOs, cooperatives and buying groups</Text>
+        <Text style={s.title}>{t.shambaGroups}</Text>
+        <Text style={s.subtitle}>{t.joinGroupsSubtitle}</Text>
+        <View style={s.searchBar}>
+          <Text style={{ fontSize: 14, marginRight: 8 }}>🔍</Text>
+          <TextInput
+            style={s.searchInput}
+            value={search}
+            onChangeText={setSearch}
+            placeholder={t.searchGroupsPlaceholder}
+            placeholderTextColor="rgba(255,255,255,0.5)"
+          />
+        </View>
       </View>
 
-      <View style={s.body}>
-        {myGroups && myGroups.length > 0 && (
-          <View style={[s.myGroupsCard, shadow.sm as any]}>
-            <Text style={s.sectionTitle}>My groups</Text>
-            {myGroups.map((m: any) => (
-              <View key={m.groupId} style={s.myGroupRow}>
-                <Ionicons name="people" size={16} color={colors.shamba[600]} />
-                <Text style={s.myGroupName}>{m.group?.name ?? 'Group'}</Text>
-                <Text style={s.myGroupRole}>{m.role?.toLowerCase()}</Text>
+      <View style={s.toggleRow}>
+        <TouchableOpacity
+          style={[s.toggleBtn, !myGroupsOnly && s.toggleBtnActive]}
+          onPress={() => setMyGroupsOnly(false)}
+        >
+          <Text style={[s.toggleText, !myGroupsOnly && s.toggleTextActive]}>{t.allGroups}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[s.toggleBtn, myGroupsOnly && s.toggleBtnActive]}
+          onPress={() => setMyGroupsOnly(true)}
+        >
+          <Text style={[s.toggleText, myGroupsOnly && s.toggleTextActive]}>{t.myGroups}</Text>
+        </TouchableOpacity>
+      </View>
+
+      {isLoading ? (
+        <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 40 }} />
+      ) : (
+        <FlatList
+          data={groups}
+          keyExtractor={(item: any) => item.id}
+          contentContainerStyle={s.list}
+          showsVerticalScrollIndicator={false}
+          onRefresh={refetch}
+          refreshing={false}
+          ListEmptyComponent={
+            <View style={s.emptyBox}>
+              <Text style={{ fontSize: 36, marginBottom: 10 }}>👥</Text>
+              <Text style={s.emptyText}>
+                {myGroupsOnly ? t.noGroupsJoined : t.noGroupsAvailable}
+              </Text>
+            </View>
+          }
+          renderItem={({ item }: any) => {
+            const isMember = myGroupIds.has(item.id);
+            return (
+              <View style={s.groupCard}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <View style={{ flex: 1, marginRight: 10 }}>
+                    <Text style={s.groupName}>{item.name}</Text>
+                    <Text style={s.groupMeta}>{item.county} · {item.type}</Text>
+                  </View>
+                  {isMember ? (
+                    <View style={s.joinedBtn}>
+                      <Text style={s.joinedBtnText}>✓ {t.member}</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={s.joinBtn}
+                      onPress={() => {
+                        Alert.alert(
+                          t.joinGroup,
+                          `${t.joinGroupConfirmPrefix} ${item.name}?`,
+                          [
+                            { text: t.no, style: 'cancel' },
+                            { text: t.yes, onPress: () => joinMutation.mutate(item.id) },
+                          ]
+                        );
+                      }}
+                      disabled={joinMutation.isPending}
+                    >
+                      <Text style={s.joinBtnText}>{t.join}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <View style={s.statsRow}>
+                  <StatPill icon="👥" value={`${item.memberCount || item.members || 0}`} label={t.members} theme={theme} />
+                  <StatPill icon="💰" value={`KES ${((item.totalSavingsKes || item.pool || 0) / 1000).toFixed(0)}k`} label={t.pool} theme={theme} />
+                </View>
+
+                {item.description && (
+                  <Text style={s.groupDesc} numberOfLines={2}>{item.description}</Text>
+                )}
               </View>
-            ))}
-          </View>
-        )}
-
-        <Text style={s.sectionTitle}>Discover groups</Text>
-
-        {isLoading && <ActivityIndicator color={colors.shamba[600]} style={{ marginTop: 40 }} />}
-
-        {!isLoading && (!groups || groups.length === 0) && (
-          <View style={{ alignItems: 'center', paddingVertical: 60 }}>
-            <Ionicons name="people-outline" size={48} color={colors.gray[300]} />
-            <Text style={{ fontSize: 14, color: colors.gray[400], marginTop: 8 }}>No groups found</Text>
-          </View>
-        )}
-
-        {(groups ?? []).map((g: any) => (
-          <GroupCard key={g.id} group={g} isMember={myGroupIds.has(g.id)} />
-        ))}
-      </View>
-    </ScrollView>
-  )
+            );
+          }}
+        />
+      )}
+    </View>
+  );
 }
 
-const s = StyleSheet.create({
-  header:         { backgroundColor: colors.shamba[800], paddingTop: 56, paddingHorizontal: spacing.xl, paddingBottom: spacing.xl },
-  title:          { fontSize: 22, fontWeight: '700', color: '#fff' },
-  subtitle:       { fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
-  body:           { padding: spacing.xl },
-  myGroupsCard:   { backgroundColor: '#fff', borderRadius: radius.lg, padding: spacing.xl, marginBottom: spacing.xl },
-  sectionTitle:   { fontSize: 14, fontWeight: '700', color: colors.gray[900], marginBottom: spacing.md },
-  myGroupRow:     { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.shamba[50], borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.sm },
-  myGroupName:    { flex: 1, fontSize: 13, fontWeight: '600', color: colors.shamba[800] },
-  myGroupRole:    { fontSize: 11, color: colors.shamba[500], textTransform: 'capitalize' },
-  card:           { backgroundColor: '#fff', borderRadius: radius.lg, padding: spacing.xl, marginBottom: spacing.md },
-  cardTop:        { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: spacing.md },
-  iconWrap:       { width: 40, height: 40, borderRadius: 12, backgroundColor: colors.shamba[100], alignItems: 'center', justifyContent: 'center' },
-  groupName:      { fontSize: 15, fontWeight: '700', color: colors.gray[900] },
-  groupCounty:    { fontSize: 12, color: colors.gray[500], marginTop: 2 },
-  typeBadge:      { borderRadius: radius.full, paddingHorizontal: 10, paddingVertical: 3 },
-  typeText:       { fontSize: 10, fontWeight: '700' },
-  desc:           { fontSize: 13, color: colors.gray[500], lineHeight: 18, marginBottom: spacing.md },
-  cardFooter:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  meta:           { fontSize: 12, color: colors.gray[400] },
-  joinBtn:        { borderWidth: 1.5, borderColor: colors.shamba[600], borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 6, minWidth: 52, alignItems: 'center' },
-  joinBtnText:    { fontSize: 12, fontWeight: '700', color: colors.shamba[600] },
-  memberBadge:    { borderRadius: radius.full, paddingHorizontal: 10, paddingVertical: 3, backgroundColor: colors.shamba[100] },
-  memberBadgeText:{ fontSize: 10, fontWeight: '700', color: colors.shamba[800] },
-})
+function StatPill({ icon, value, label, theme }: any) {
+  return (
+    <View style={{ backgroundColor: theme.colors.primaryLight, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, flexDirection: 'row', gap: 4, alignItems: 'center' }}>
+      <Text style={{ fontSize: 11 }}>{icon}</Text>
+      <Text style={{ fontSize: 12, fontWeight: '600', color: theme.colors.primaryDark }}>{value}</Text>
+      <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>{label}</Text>
+    </View>
+  );
+}
+
+const MOCK_GROUPS = [
+  { id: '1', name: 'Kirinyaga Dairy Chama', county: 'Kirinyaga', type: 'COOPERATIVE', memberCount: 47, totalSavingsKes: 230000, description: 'A dairy cooperative supporting smallholder dairy farmers in Kirinyaga.' },
+  { id: '2', name: 'Nakuru Maize Farmers', county: 'Nakuru', type: 'BUYING_GROUP', memberCount: 82, totalSavingsKes: 1100000, description: 'Joint buying and selling of maize and grain in Nakuru.' },
+  { id: '3', name: 'Meru Tea Growers', county: 'Meru', type: 'COOPERATIVE', memberCount: 118, totalSavingsKes: 890000, description: 'Empowering tea farmers with better markets and fair prices.' },
+  { id: '4', name: 'Kajiado Livestock Sacco', county: 'Kajiado', type: 'SACCO', memberCount: 63, totalSavingsKes: 540000, description: 'Savings and credit SACCO for livestock farmers.' },
+  { id: '5', name: 'Kiambu Horticultural Group', county: 'Kiambu', type: 'BUYING_GROUP', memberCount: 55, totalSavingsKes: 310000, description: 'Joint selling of flowers and vegetables for horticultural farmers.' },
+];
+
+const makeStyles = (theme: ReturnType<typeof import('../../src/lib/theme').useTheme>) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    header: { backgroundColor: theme.colors.header, padding: 16, paddingTop: 52, paddingBottom: 20 },
+    title: { color: '#fff', fontSize: 18, fontWeight: '600' },
+    subtitle: { color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 2, marginBottom: 12 },
+    searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 },
+    searchInput: { flex: 1, color: '#fff', fontSize: 14 },
+    toggleRow: { flexDirection: 'row', padding: 12, gap: 10, backgroundColor: theme.colors.cardBg, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border },
+    toggleBtn: { flex: 1, paddingVertical: 8, borderRadius: 8, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center' },
+    toggleBtnActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+    toggleText: { fontSize: 13, color: theme.colors.textSecondary, fontWeight: '500' },
+    toggleTextActive: { color: '#fff' },
+    list: { padding: 12, gap: 10 },
+    emptyBox: { alignItems: 'center', paddingVertical: 40 },
+    emptyText: { fontSize: 14, color: theme.colors.textSecondary, textAlign: 'center' },
+    groupCard: { backgroundColor: theme.colors.cardBg, borderRadius: theme.radius.md, padding: 14, borderWidth: 0.5, borderColor: theme.colors.cardBorder },
+    groupName: { fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary },
+    groupMeta: { fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 },
+    groupDesc: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 8, lineHeight: 17 },
+    statsRow: { flexDirection: 'row', gap: 6, marginTop: 10, flexWrap: 'wrap' },
+    joinBtn: { backgroundColor: theme.colors.primary, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 7 },
+    joinBtnText: { color: '#fff', fontWeight: '600', fontSize: 12 },
+    joinedBtn: { borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
+    joinedBtnText: { fontSize: 12, color: theme.colors.textSecondary },
+  });

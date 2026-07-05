@@ -1,47 +1,55 @@
-import { Tabs } from 'expo-router'
-import { Ionicons } from '@expo/vector-icons'
-import { colors } from '../../src/lib/theme'
-
-type IoniconName = keyof typeof Ionicons.glyphMap
-
-const TABS: { name: string; title: string; icon: IoniconName; active: IoniconName }[] = [
-  { name: 'dashboard', title: 'Home',    icon: 'home-outline',       active: 'home' },
-  { name: 'market',    title: 'Market',  icon: 'storefront-outline', active: 'storefront' },
-  { name: 'loans',     title: 'Finance', icon: 'cash-outline',       active: 'cash' },
-  { name: 'groups',    title: 'Groups',  icon: 'people-outline',     active: 'people' },
-  { name: 'profile',   title: 'Profile', icon: 'person-outline',     active: 'person' },
-]
+import { Tabs } from 'expo-router';
+import { useTheme } from '../../src/lib/theme';
 
 export default function TabsLayout() {
+  const theme = useTheme();
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.shamba[600],
-        tabBarInactiveTintColor: colors.gray[400],
+        tabBarActiveTintColor: theme.colors.navActive,
+        tabBarInactiveTintColor: theme.colors.navInactive,
         tabBarStyle: {
-          backgroundColor: '#ffffff',
-          borderTopColor: colors.gray[100],
-          borderTopWidth: 1,
-          height: 64,
-          paddingBottom: 8,
-          paddingTop: 6,
+          backgroundColor: theme.colors.navBg,
+          borderTopColor: theme.colors.border,
+          borderTopWidth: 0.5,
+          paddingBottom: 16,
+          paddingTop: 8,
+          height: 62,
         },
-        tabBarLabelStyle: { fontSize: 10, fontWeight: '600' },
+        tabBarLabelStyle: {
+          fontSize: 10,
+          fontWeight: '500',
+          marginTop: 2,
+        },
       }}
     >
-      {TABS.map(({ name, title, icon, active }) => (
-        <Tabs.Screen
-          key={name}
-          name={name}
-          options={{
-            title,
-            tabBarIcon: ({ focused, color }) => (
-              <Ionicons name={focused ? active : icon} size={22} color={color} />
-            ),
-          }}
-        />
-      ))}
+      <Tabs.Screen
+        name="dashboard"
+        options={{ title: 'Home', tabBarIcon: ({ color }) => <TabIcon emoji="🏠" color={color} /> }}
+      />
+      <Tabs.Screen
+        name="market"
+        options={{ title: 'Market', tabBarIcon: ({ color }) => <TabIcon emoji="🛒" color={color} /> }}
+      />
+      <Tabs.Screen
+        name="loans"
+        options={{ title: 'Loans', tabBarIcon: ({ color }) => <TabIcon emoji="💳" color={color} /> }}
+      />
+      <Tabs.Screen
+        name="groups"
+        options={{ title: 'Groups', tabBarIcon: ({ color }) => <TabIcon emoji="👥" color={color} /> }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{ title: 'Profile', tabBarIcon: ({ color }) => <TabIcon emoji="👤" color={color} /> }}
+      />
     </Tabs>
-  )
+  );
+}
+
+function TabIcon({ emoji, color }: { emoji: string; color: string }) {
+  const { Text } = require('react-native');
+  return <Text style={{ fontSize: 20, opacity: color === '#888' ? 0.5 : 1 }}>{emoji}</Text>;
 }

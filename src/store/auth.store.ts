@@ -1,55 +1,70 @@
-import { create } from 'zustand'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-interface User {
-  id: string
-  name: string
-  phone: string
-  email?: string | null
-  role: string
-  county?: string | null
+export type UserRole = 'FARMER' | 'BUYER' | 'ADMIN' | 'SUPER_ADMIN';
+
+export interface AuthUser {
+  id: string;
+  phone: string;
+  name: string;
+  role: UserRole;
+  county?: string;
+  farmSize?: number;
+  creditScore?: number;
+  walletBalance?: number;
+  memberSince?: string;
 }
 
 interface AuthState {
-  user: User | null
-  accessToken: string | null
-  isAuthenticated: boolean
-  isLoading: boolean
-  setAuth: (user: User, token: string, refresh: string) => Promise<void>
-  logout: () => Promise<void>
-  load: () => Promise<void>
+  token: string | null;
+  refreshToken: string | null;
+  user: AuthUser | null;
+  isAuthenticated: boolean;
+
+  setToken: (token: string) => void;
+  setRefreshToken: (token: string) => void;
+  setUser: (user: AuthUser) => void;
+  logout: () => void;
+  updateUser: (partial: Partial<AuthUser>) => void;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
-  accessToken: null,
-  isAuthenticated: false,
-  isLoading: true,
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      token: null,
+      refreshToken: null,
+      user: null,
+      isAuthenticated: false,
 
-  setAuth: async (user, accessToken, refreshToken) => {
-    await AsyncStorage.multiSet([
-      ['token',   accessToken],
-      ['refresh', refreshToken],
-      ['user',    JSON.stringify(user)],
-    ])
-    set({ user, accessToken, isAuthenticated: true })
-  },
+      setToken: (token) => set({ token, isAuthenticated: true }),
 
-  logout: async () => {
-    await AsyncStorage.multiRemove(['token', 'refresh', 'user'])
-    set({ user: null, accessToken: null, isAuthenticated: false })
-  },
+      setRefreshToken: (refreshToken) => set({ refreshToken }),
 
-  load: async () => {
-    try {
-      const [[, token], [, userStr]] = await AsyncStorage.multiGet(['token', 'user'])
-      if (token && userStr) {
-        set({ accessToken: token, user: JSON.parse(userStr), isAuthenticated: true })
-      }
-    } catch {
-      // storage read failed — start unauthenticated
-    } finally {
-      set({ isLoading: false })
+      setUser: (user) => set({ user, isAuthenticated: true }),
+
+      updateUser: (partial) =>
+        set((state) => ({
+          user: state.user ? { ...state.user, ...partial } : null,
+        })),
+
+      logout: () =>
+        set({
+          token: null,
+          refreshToken: null,
+          user: null,
+          isAuthenticated: false,
+        }),
+    }),
+    {
+      name: 'shamba-auth',
+      storage: createJSONStorage(() => AsyncStorage),
+      partialize: (state) => ({
+        token: state.token,
+        refreshToken: state.refreshToken,
+        user: state.user,
+        isAuthenticated: state.isAuthenticated,
+      }),
     }
-  },
-}))
+  )
+);

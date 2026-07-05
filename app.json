@@ -1,11 +1,12 @@
 {
   "expo": {
     "name": "shamba-mobile",
+    "scheme": "shamba",
     "slug": "shamba-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -31,6 +32,10 @@
       "eas": {
         "projectId": "a36cdff8-936c-4442-b605-f02861bb284d"
       }
-    }
+    },
+    "plugins": [
+      "expo-font",
+      "expo-router"
+    ]
   }
 }

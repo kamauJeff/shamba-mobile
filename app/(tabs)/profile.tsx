@@ -1,206 +1,345 @@
-import { useState } from 'react'
-import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, ActivityIndicator, Alert, RefreshControl } from 'react-native'
-import { Ionicons } from '@expo/vector-icons'
-import { LinearGradient } from 'expo-linear-gradient'
-import { useQueryClient } from '@tanstack/react-query'
-import { useProfile, useCredit, useWallet, useUpsertProfile, useRefreshCredit, useWithdraw } from '../../src/hooks/useApi'
-import { useAuthStore } from '../../src/store/auth.store'
-import { colors, spacing, radius, shadow } from '../../src/lib/theme'
-import { formatKes, formatDate, scorePercent } from '../../src/lib/utils'
+import { useState } from 'react';
+import {
+  View, Text, ScrollView, TouchableOpacity, StyleSheet,
+  Alert, Modal, TextInput, ActivityIndicator, useColorScheme, Switch,
+} from 'react-native';
+import { router } from 'expo-router';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '../../src/store/auth.store';
+import { farmerApi } from '../../src/api/client';
+import { useTheme } from '../../src/lib/theme';
+import { useLanguage } from '../../src/lib/LanguageContext';
 
-const KENYA_COUNTIES = ['Nakuru', 'Nairobi', 'Kiambu', 'Meru', 'Kisumu', 'Kakamega', 'Uasin Gishu', 'Trans Nzoia', 'Nyeri', 'Machakos', 'Mombasa', 'Kericho', "Murang'a", 'Embu', 'Nandi', 'Bungoma']
+const COUNTIES = [
+  'Nairobi', 'Mombasa', 'Kisumu', 'Nakuru', 'Kiambu', 'Machakos',
+  'Meru', 'Kirinyaga', 'Nyeri', 'Uasin Gishu', 'Trans Nzoia',
+  'Kajiado', 'Nandi', 'Laikipia', 'Kakamega', 'Kericho', 'Bomet',
+  'Siaya', 'Kisii', 'Migori', 'Homa Bay', 'Other',
+];
+
+function Avatar({ name, theme }: { name: string; theme: any }) {
+  const initials = name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase();
+  return (
+    <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ fontSize: 22, color: '#fff', fontWeight: '600' }}>{initials}</Text>
+    </View>
+  );
+}
+
+function RowItem({ icon, label, value, onPress, danger, theme, right }: any) {
+  return (
+    <TouchableOpacity
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 13, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}
+      onPress={onPress}
+      disabled={!onPress && !right}
+      activeOpacity={onPress ? 0.6 : 1}
+    >
+      <Text style={{ fontSize: 18, width: 24, textAlign: 'center' }}>{icon}</Text>
+      <Text style={{ flex: 1, fontSize: 14, color: danger ? theme.colors.danger : theme.colors.textPrimary }}>{label}</Text>
+      {value && !right && <Text style={{ fontSize: 13, color: theme.colors.textSecondary }}>{value}</Text>}
+      {right && right}
+      {onPress && !right && <Text style={{ fontSize: 16, color: theme.colors.textMuted }}>›</Text>}
+    </TouchableOpacity>
+  );
+}
 
 export default function ProfileScreen() {
-  const qc = useQueryClient()
-  const { user, logout } = useAuthStore()
-  const [refreshing, setRefreshing] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [withdrawAmt, setWithdrawAmt] = useState('')
+  const theme = useTheme();
+  const colorScheme = useColorScheme();
+  const queryClient = useQueryClient();
+  const { user, updateUser, logout } = useAuthStore();
+  const { t, language, toggleLanguage } = useLanguage();
 
-  const { data: profileData, refetch } = useProfile()
-  const { data: credit } = useCredit()
-  const { data: walletData } = useWallet()
-  const upsert = useUpsertProfile()
-  const refreshCredit = useRefreshCredit()
-  const withdraw = useWithdraw()
+  const [editModal, setEditModal] = useState(false);
+  const [form, setForm] = useState({
+    name: user?.name || '',
+    county: user?.county || '',
+    farmSize: user?.farmSize?.toString() || '',
+    primaryCrop: '',
+    subCounty: '',
+  });
+  const [countyPicker, setCountyPicker] = useState(false);
 
-  const profile = profileData?.profile
-  const wallet = walletData?.wallet
-  const [form, setForm] = useState<any>({})
+  const { data: profileData } = useQuery({
+    queryKey: ['farmer-profile'],
+    queryFn: () => farmerApi.getProfile().then((r) => r.data?.data),
+  });
 
-  async function onRefresh() {
-    setRefreshing(true)
-    await Promise.all([refetch(), qc.invalidateQueries({ queryKey: ['credit'] }), qc.invalidateQueries({ queryKey: ['wallet'] })])
-    setRefreshing(false)
-  }
+  const { data: creditData } = useQuery({
+    queryKey: ['credit'],
+    queryFn: () => farmerApi.getCreditScore().then((r) => r.data?.data),
+  });
 
-  function startEdit() { setForm({ ...profile }); setEditing(true) }
+  const updateMutation = useMutation({
+    mutationFn: () =>
+      farmerApi.upsertProfile({
+        county: form.county || user?.county || 'Nairobi',
+        subCounty: form.subCounty || profileData?.subCounty || 'Central',
+        farmSizeAcres: parseFloat(form.farmSize) || 1,
+        primaryCrop: form.primaryCrop || profileData?.primaryCrop || 'Maize',
+        secondaryCrops: profileData?.secondaryCrops || [],
+        soilType: profileData?.soilType || 'LOAM',
+        irrigationType: profileData?.irrigationType || 'NONE',
+        yearsFarming: profileData?.yearsFarming || 1,
+        hasStorage: profileData?.hasStorage || false,
+      }),
+    onSuccess: () => {
+      updateUser({ county: form.county, farmSize: parseFloat(form.farmSize) || undefined });
+      queryClient.invalidateQueries({ queryKey: ['farmer-profile'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      setEditModal(false);
+      Alert.alert(t.profileUpdated, t.profileUpdatedMsg);
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.error || err.response?.data?.message || t.updateFailed;
+      Alert.alert(t.error, msg);
+    },
+  });
 
-  function handleSave() {
-    upsert.mutate(form, {
-      onSuccess: () => { setEditing(false); Alert.alert('Saved', 'Profile updated') },
-      onError: (e: any) => Alert.alert('Error', e.response?.data?.error ?? 'Failed to save'),
-    })
-  }
+  const handleLogout = () => {
+    Alert.alert(t.logout, t.logoutConfirm, [
+      { text: t.cancel, style: 'cancel' },
+      {
+        text: t.logout,
+        style: 'destructive',
+        onPress: () => {
+          logout();
+          queryClient.clear();
+          router.replace('/(auth)/login');
+        },
+      },
+    ]);
+  };
 
-  function handleWithdraw() {
-    if (!withdrawAmt) return
-    withdraw.mutate({ amountKes: Number(withdrawAmt) }, {
-      onSuccess: (d: any) => { Alert.alert('Success', d.message ?? 'Withdrawal initiated'); setWithdrawAmt('') },
-      onError: (e: any) => Alert.alert('Error', e.response?.data?.error ?? 'Withdrawal failed'),
-    })
-  }
+  const creditScore = creditData?.score ?? user?.creditScore ?? 0;
+  const creditTier =
+    creditScore >= 750 ? t.excellent :
+    creditScore >= 670 ? t.good :
+    creditScore >= 580 ? t.fair : t.poor;
 
-  const scoreVal = credit?.score ?? 0
-  const ratingColor = !credit ? colors.gray[500]
-    : scoreVal >= 700 ? colors.shamba[600]
-    : scoreVal >= 500 ? colors.amber[600] : colors.red[600]
+  const walletBalance = profileData?.wallet?.balanceKes ?? 0;
+  const s = makeStyles(theme);
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.gray[50] }} contentContainerStyle={{ paddingBottom: 60 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.shamba[600]} />}>
-
-      {/* Header */}
-      <LinearGradient colors={['#13522e', '#138544']} style={{ paddingTop: 56, paddingHorizontal: spacing.xl, paddingBottom: spacing['2xl'] }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.lg }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
-            <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontSize: 20, fontWeight: '800', color: '#fff' }}>{user?.name?.[0] ?? 'F'}</Text>
-            </View>
-            <View>
-              <Text style={{ fontSize: 18, fontWeight: '700', color: '#fff' }}>{user?.name}</Text>
-              <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>{user?.phone}</Text>
-            </View>
-          </View>
-          <TouchableOpacity onPress={logout} style={{ padding: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: radius.md }}>
-            <Ionicons name="log-out-outline" size={20} color="rgba(255,255,255,0.8)" />
+    <View style={s.container}>
+      <View style={s.header}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <Avatar name={user?.name || 'JK'} theme={theme} />
+          <TouchableOpacity style={s.editBtn} onPress={() => {
+            setForm({
+              name: user?.name || '',
+              county: user?.county || profileData?.county || '',
+              farmSize: profileData?.farmSizeAcres?.toString() || user?.farmSize?.toString() || '',
+              primaryCrop: profileData?.primaryCrop || '',
+              subCounty: profileData?.subCounty || '',
+            });
+            setEditModal(true);
+          }}>
+            <Text style={s.editBtnText}>✏️ {t.editProfile}</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Credit score strip */}
-        {credit && (
-          <View style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: radius.lg, padding: spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View>
-              <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>Credit score</Text>
-              <Text style={{ fontSize: 32, fontWeight: '800', color: '#fff' }}>{credit.score}<Text style={{ fontSize: 14, fontWeight: '400', color: 'rgba(255,255,255,0.6)' }}>/850</Text></Text>
-              <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', fontWeight: '600' }}>{credit.rating?.replace('_', ' ')}</Text>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>Max loan</Text>
-              <Text style={{ fontSize: 16, fontWeight: '800', color: '#fff' }}>{formatKes(credit.maxLoanKes ?? 0)}</Text>
-              <TouchableOpacity onPress={() => refreshCredit.mutate()} style={{ marginTop: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: radius.full, paddingHorizontal: 10, paddingVertical: 4 }}>
-                {refreshCredit.isPending ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ fontSize: 10, color: '#fff', fontWeight: '600' }}>↻ Refresh</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-      </LinearGradient>
-
-      <View style={{ padding: spacing.xl, gap: spacing.lg }}>
-        {/* Wallet card */}
-        <View style={[{ backgroundColor: '#fff', borderRadius: radius.lg, overflow: 'hidden' }, shadow.sm as any]}>
-          <View style={{ padding: spacing.xl }}>
-            <Text style={{ fontSize: 14, fontWeight: '700', color: colors.gray[900], marginBottom: spacing.md }}>Shamba Wallet</Text>
-            <View style={{ flexDirection: 'row', gap: spacing.md, marginBottom: spacing.lg }}>
-              <View style={{ flex: 1, backgroundColor: colors.shamba[50], borderRadius: radius.md, padding: spacing.md }}>
-                <Text style={{ fontSize: 11, color: colors.shamba[600] }}>Available</Text>
-                <Text style={{ fontSize: 18, fontWeight: '800', color: colors.shamba[800], marginTop: 2 }}>{formatKes(wallet?.balanceKes ?? 0)}</Text>
-              </View>
-              <View style={{ flex: 1, backgroundColor: colors.blue[100], borderRadius: radius.md, padding: spacing.md }}>
-                <Text style={{ fontSize: 11, color: colors.blue[600] }}>Escrow</Text>
-                <Text style={{ fontSize: 18, fontWeight: '800', color: colors.blue[800], marginTop: 2 }}>{formatKes(wallet?.escrowKes ?? 0)}</Text>
-              </View>
-            </View>
-            <View style={{ flexDirection: 'row', gap: spacing.md }}>
-              <TextInput style={{ flex: 1, borderWidth: 1.5, borderColor: colors.gray[200], borderRadius: radius.md, height: 44, paddingHorizontal: spacing.md, fontSize: 14, color: colors.gray[900] }}
-                keyboardType="numeric" placeholder="Amount (KES)" placeholderTextColor={colors.gray[400]} value={withdrawAmt} onChangeText={setWithdrawAmt} />
-              <TouchableOpacity style={{ backgroundColor: colors.shamba[600], borderRadius: radius.md, paddingHorizontal: spacing.lg, alignItems: 'center', justifyContent: 'center', opacity: withdraw.isPending ? 0.5 : 1 }}
-                disabled={withdraw.isPending} onPress={handleWithdraw}>
-                {withdraw.isPending ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Withdraw</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
+        <Text style={s.userName}>{user?.name || t.farmer}</Text>
+        <Text style={s.userRole}>
+          {user?.role === 'FARMER' ? `🌾 ${t.farmer}` : `🛒 ${t.buyer}`} · {user?.county || profileData?.county || 'Kenya'}
+        </Text>
+        <Text style={s.userPhone}>{user?.phone}</Text>
+        <View style={s.scorePill}>
+          <Text style={s.scorePillText}>⭐ {t.creditScore}: {creditScore} ({creditTier})</Text>
         </View>
-
-        {/* Farm profile card */}
-        <View style={[{ backgroundColor: '#fff', borderRadius: radius.lg, padding: spacing.xl }, shadow.sm as any]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.lg }}>
-            <Text style={{ fontSize: 14, fontWeight: '700', color: colors.gray[900] }}>Farm profile</Text>
-            <TouchableOpacity onPress={editing ? () => setEditing(false) : startEdit}>
-              <Text style={{ fontSize: 13, color: colors.shamba[600], fontWeight: '600' }}>{editing ? 'Cancel' : 'Edit'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {!editing ? (
-            <View style={{ gap: spacing.md }}>
-              {[
-                { label: 'Primary crop', value: profile?.primaryCrop },
-                { label: 'Farm size', value: profile?.farmSizeAcres ? `${profile.farmSizeAcres} acres` : null },
-                { label: 'County', value: profile?.county },
-                { label: 'Sub-county', value: profile?.subCounty },
-                { label: 'Years farming', value: profile?.yearsFarming ? `${profile.yearsFarming} years` : null },
-                { label: 'Irrigation', value: profile?.irrigationType?.replace('_', ' ') },
-                { label: 'Previous yield', value: profile?.previousYieldKg ? `${profile.previousYieldKg} kg` : null },
-              ].map(({ label, value }) => value ? (
-                <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.gray[50] }}>
-                  <Text style={{ fontSize: 13, color: colors.gray[500] }}>{label}</Text>
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: colors.gray[900] }}>{value}</Text>
-                </View>
-              ) : null)}
-              {!profile && (
-                <Text style={{ fontSize: 13, color: colors.gray[400], textAlign: 'center', paddingVertical: spacing.lg }}>No profile yet. Tap Edit to add your farm details.</Text>
-              )}
-            </View>
-          ) : (
-            <View style={{ gap: spacing.md }}>
-              {[
-                { k: 'primaryCrop', label: 'Primary crop', kb: 'default' as const },
-                { k: 'farmSizeAcres', label: 'Farm size (acres)', kb: 'numeric' as const },
-                { k: 'county', label: 'County', kb: 'default' as const },
-                { k: 'subCounty', label: 'Sub-county', kb: 'default' as const },
-                { k: 'yearsFarming', label: 'Years farming', kb: 'numeric' as const },
-                { k: 'previousYieldKg', label: 'Previous yield (kg)', kb: 'numeric' as const },
-                { k: 'nationalId', label: 'National ID', kb: 'default' as const },
-              ].map(({ k, label, kb }) => (
-                <View key={k}>
-                  <Text style={{ fontSize: 11, fontWeight: '600', color: colors.gray[600], marginBottom: 4 }}>{label}</Text>
-                  <TextInput style={{ borderWidth: 1.5, borderColor: colors.gray[200], borderRadius: radius.md, height: 44, paddingHorizontal: spacing.md, fontSize: 14, color: colors.gray[900] }}
-                    value={String(form[k] ?? '')} onChangeText={v => setForm((p: any) => ({ ...p, [k]: kb === 'numeric' ? Number(v) : v }))} keyboardType={kb} placeholderTextColor={colors.gray[400]} placeholder={label} />
-                </View>
-              ))}
-              <TouchableOpacity style={{ backgroundColor: colors.shamba[600], borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', marginTop: spacing.md, opacity: upsert.isPending ? 0.6 : 1 }} disabled={upsert.isPending} onPress={handleSave}>
-                {upsert.isPending ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>Save profile</Text>}
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-
-        {/* Recent transactions */}
-        {walletData?.transactions?.length > 0 && (
-          <View style={[{ backgroundColor: '#fff', borderRadius: radius.lg, overflow: 'hidden' }, shadow.sm as any]}>
-            <View style={{ padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.gray[50] }}>
-              <Text style={{ fontSize: 14, fontWeight: '700', color: colors.gray[900] }}>Recent transactions</Text>
-            </View>
-            {walletData.transactions.slice(0, 8).map((tx: any) => {
-              const isCredit = ['INSURANCE_PAYOUT', 'MARKET_SALE', 'WALLET_TOPUP', 'REFERRAL_BONUS', 'LOAN_DISBURSEMENT'].includes(tx.type)
-              return (
-                <View key={tx.id} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.gray[50] }}>
-                  <View style={{ width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isCredit ? colors.shamba[50] : '#fee2e2' }}>
-                    <Ionicons name={isCredit ? 'arrow-down-circle' : 'arrow-up-circle'} size={18} color={isCredit ? colors.shamba[600] : colors.red[600]} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '500', color: colors.gray[800] }} numberOfLines={1}>{tx.description ?? tx.type.replace(/_/g, ' ')}</Text>
-                    <Text style={{ fontSize: 11, color: colors.gray[400], marginTop: 1 }}>{formatDate(tx.createdAt)}</Text>
-                  </View>
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: isCredit ? colors.shamba[700] : colors.red[600] }}>
-                    {isCredit ? '+' : '-'}{formatKes(tx.amountKes)}
-                  </Text>
-                </View>
-              )
-            })}
-          </View>
-        )}
       </View>
-    </ScrollView>
-  )
+
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {/* Wallet summary */}
+        <View style={s.walletRow}>
+          <View style={s.walletItem}>
+            <Text style={s.walletLabel}>{t.walletBalance}</Text>
+            <Text style={s.walletValue}>KES {walletBalance.toLocaleString()}</Text>
+          </View>
+          <View style={[s.walletItem, { borderLeftWidth: 0.5, borderLeftColor: theme.colors.border }]}>
+            <Text style={s.walletLabel}>{t.memberSince}</Text>
+            <Text style={s.walletValue}>Jan 2024</Text>
+          </View>
+        </View>
+
+        {/* Farm info */}
+        <Text style={s.sectionTitle}>{t.farmDetails.toUpperCase()}</Text>
+        <View style={s.section}>
+          <RowItem icon="📍" label={t.county} value={profileData?.county || user?.county || '—'} theme={theme} />
+          <RowItem icon="🌿" label={t.farmSize} value={profileData?.farmSizeAcres ? `${profileData.farmSizeAcres} acres` : '—'} theme={theme} />
+          <RowItem icon="🌱" label={t.primaryCrop} value={profileData?.primaryCrop || '—'} theme={theme} />
+          <RowItem icon="🛡️" label={t.insuranceStatus} value={`${t.active} · ${t.crops}`} theme={theme} />
+          <RowItem icon="💳" label={t.shambaPay} value={t.linked} theme={theme} />
+        </View>
+
+        {/* Settings */}
+        <Text style={s.sectionTitle}>{t.settings.toUpperCase()}</Text>
+        <View style={s.section}>
+          <RowItem
+            icon="🌙"
+            label={`${t.appearance}: ${colorScheme === 'dark' ? t.dark : t.light}`}
+            theme={theme}
+            value={t.system}
+          />
+          <RowItem
+            icon="🔔"
+            label={t.notifications}
+            theme={theme}
+            value={t.on}
+            onPress={() => Alert.alert(t.notifications, t.notificationsMsg)}
+          />
+          {/* Language toggle */}
+          <RowItem
+            icon="🌍"
+            label={t.language}
+            theme={theme}
+            right={
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={{ fontSize: 12, color: language === 'en' ? theme.colors.textMuted : theme.colors.primary, fontWeight: language === 'sw' ? '700' : '400' }}>SW</Text>
+                <Switch
+                  value={language === 'en'}
+                  onValueChange={toggleLanguage}
+                  trackColor={{ false: theme.colors.primary, true: theme.colors.primary }}
+                  thumbColor="#fff"
+                  style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+                />
+                <Text style={{ fontSize: 12, color: language === 'sw' ? theme.colors.textMuted : theme.colors.primary, fontWeight: language === 'en' ? '700' : '400' }}>EN</Text>
+              </View>
+            }
+          />
+        </View>
+
+        {/* Support */}
+        <Text style={s.sectionTitle}>{t.support.toUpperCase()}</Text>
+        <View style={s.section}>
+          <RowItem icon="❓" label={t.helpFaq} theme={theme}
+            onPress={() => Alert.alert(t.helpFaq, 'shamba.africa/help\n+254 700 000 000')} />
+          <RowItem icon="📞" label={t.contactSupport} theme={theme}
+            onPress={() => Alert.alert(t.contactSupport, 'support@shamba.africa\n+254 700 000 000')} />
+          <RowItem icon="📋" label={t.terms} theme={theme}
+            onPress={() => Alert.alert(t.terms, 'shamba.africa/terms')} />
+          <RowItem icon="🔒" label={t.privacy} theme={theme}
+            onPress={() => Alert.alert(t.privacy, 'shamba.africa/privacy')} />
+        </View>
+
+        <View style={[s.section, { marginTop: 8 }]}>
+          <RowItem icon="🚪" label={t.logout} theme={theme} onPress={handleLogout} danger />
+        </View>
+
+        <Text style={s.versionText}>{t.version}</Text>
+        <View style={{ height: 24 }} />
+      </ScrollView>
+
+      {/* Edit profile modal */}
+      <Modal visible={editModal} transparent animationType="slide">
+        <View style={s.modalOverlay}>
+          <ScrollView>
+            <View style={[s.modalCard, { margin: 20 }]}>
+              <Text style={s.modalTitle}>{t.editProfile}</Text>
+
+              <Text style={s.label}>{t.name}</Text>
+              <TextInput
+                style={s.input}
+                value={form.name}
+                onChangeText={(v) => setForm({ ...form, name: v })}
+                placeholder={t.name}
+                placeholderTextColor={theme.colors.textMuted}
+                autoCapitalize="words"
+              />
+
+              <Text style={s.label}>{t.county}</Text>
+              <TouchableOpacity
+                style={[s.input, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}
+                onPress={() => setCountyPicker(!countyPicker)}
+              >
+                <Text style={{ color: form.county ? theme.colors.textPrimary : theme.colors.textMuted, fontSize: 15 }}>
+                  {form.county || t.selectCounty}
+                </Text>
+                <Text style={{ color: theme.colors.textMuted }}>▼</Text>
+              </TouchableOpacity>
+              {countyPicker && (
+                <View style={s.dropdown}>
+                  {COUNTIES.map((c) => (
+                    <TouchableOpacity
+                      key={c}
+                      style={[s.dropdownItem, form.county === c && { backgroundColor: theme.colors.primaryLight }]}
+                      onPress={() => { setForm({ ...form, county: c }); setCountyPicker(false); }}
+                    >
+                      <Text style={{ fontSize: 14, color: form.county === c ? theme.colors.primary : theme.colors.textPrimary }}>{c}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              <Text style={s.label}>{t.primaryCrop}</Text>
+              <TextInput
+                style={s.input}
+                value={form.primaryCrop}
+                onChangeText={(v) => setForm({ ...form, primaryCrop: v })}
+                placeholder="e.g. Maize, Tomatoes, Tea"
+                placeholderTextColor={theme.colors.textMuted}
+              />
+
+              <Text style={s.label}>{t.farmSize}</Text>
+              <TextInput
+                style={s.input}
+                value={form.farmSize}
+                onChangeText={(v) => setForm({ ...form, farmSize: v })}
+                placeholder="e.g. 2.5"
+                placeholderTextColor={theme.colors.textMuted}
+                keyboardType="decimal-pad"
+              />
+
+              <View style={s.modalBtns}>
+                <TouchableOpacity style={s.cancelBtn} onPress={() => setEditModal(false)}>
+                  <Text style={s.cancelBtnText}>{t.cancel}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={s.saveBtn}
+                  onPress={() => updateMutation.mutate()}
+                  disabled={updateMutation.isPending}
+                >
+                  {updateMutation.isPending
+                    ? <ActivityIndicator color="#fff" />
+                    : <Text style={s.saveBtnText}>{t.save}</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+    </View>
+  );
 }
+
+const makeStyles = (theme: ReturnType<typeof import('../../src/lib/theme').useTheme>) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    header: { backgroundColor: theme.colors.header, padding: 20, paddingTop: 52, paddingBottom: 24 },
+    editBtn: { backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6 },
+    editBtnText: { color: '#fff', fontWeight: '600', fontSize: 12 },
+    userName: { color: '#fff', fontSize: 20, fontWeight: '700', marginTop: 12, letterSpacing: -0.3 },
+    userRole: { color: 'rgba(255,255,255,0.75)', fontSize: 13, marginTop: 3 },
+    userPhone: { color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 2 },
+    scorePill: { alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, marginTop: 10 },
+    scorePillText: { color: '#fff', fontSize: 12, fontWeight: '500' },
+    walletRow: { flexDirection: 'row', backgroundColor: theme.colors.cardBg, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border },
+    walletItem: { flex: 1, padding: 16 },
+    walletLabel: { fontSize: 11, color: theme.colors.textSecondary, marginBottom: 4 },
+    walletValue: { fontSize: 16, fontWeight: '600', color: theme.colors.textPrimary },
+    sectionTitle: { fontSize: 11, fontWeight: '600', color: theme.colors.textSecondary, marginHorizontal: 16, marginTop: 18, marginBottom: 6, letterSpacing: 0.8 },
+    section: { backgroundColor: theme.colors.cardBg, borderTopWidth: 0.5, borderBottomWidth: 0.5, borderColor: theme.colors.border },
+    versionText: { textAlign: 'center', fontSize: 11, color: theme.colors.textMuted, marginTop: 16 },
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
+    modalCard: { backgroundColor: theme.colors.cardBg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 22, borderWidth: 0.5, borderColor: theme.colors.cardBorder },
+    modalTitle: { fontSize: 18, fontWeight: '600', color: theme.colors.textPrimary, marginBottom: 18 },
+    label: { fontSize: 12, fontWeight: '500', color: theme.colors.textSecondary, marginBottom: 6 },
+    input: { backgroundColor: theme.colors.background, borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: theme.radius.sm, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: theme.colors.textPrimary, marginBottom: 14 },
+    dropdown: { borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: theme.radius.sm, backgroundColor: theme.colors.cardBg, marginBottom: 14, maxHeight: 200 },
+    dropdownItem: { paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border },
+    modalBtns: { flexDirection: 'row', gap: 10, marginTop: 4 },
+    cancelBtn: { flex: 1, borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: theme.radius.md, paddingVertical: 13, alignItems: 'center' },
+    cancelBtnText: { fontSize: 14, color: theme.colors.textSecondary },
+    saveBtn: { flex: 1, backgroundColor: theme.colors.primary, borderRadius: theme.radius.md, paddingVertical: 13, alignItems: 'center' },
+    saveBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  });

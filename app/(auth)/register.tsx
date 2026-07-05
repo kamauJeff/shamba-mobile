@@ -1,133 +1,199 @@
-import { useState } from 'react'
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native'
-import { router } from 'expo-router'
-import { Ionicons } from '@expo/vector-icons'
-import { authApi } from '../../src/api/endpoints'
-import { useAuthStore } from '../../src/store/auth.store'
-import { colors, spacing, radius } from '../../src/lib/theme'
+import { useState } from 'react';
+import {
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert,
+} from 'react-native';
+import { router } from 'expo-router';
+import { useAuthStore } from '../../src/store/auth.store';
+import { authApi } from '../../src/api/client';
+import { useTheme } from '../../src/lib/theme';
+
+const COUNTIES = [
+  'Nairobi', 'Mombasa', 'Kisumu', 'Nakuru', 'Kiambu', 'Machakos',
+  'Meru', 'Kakamega', 'Kilifi', 'Kirinyaga', 'Nyeri', 'Murang\'a',
+  'Uasin Gishu', 'Trans Nzoia', 'Bungoma', 'Kajiado', 'Bomet',
+  'Kericho', 'Nandi', 'Laikipia', 'Other',
+];
 
 export default function RegisterScreen() {
-  const [form, setForm] = useState({ name: '', phone: '', email: '', password: '', role: 'FARMER' })
-  const [showPw, setShowPw] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const { setAuth } = useAuthStore()
-  const f = (k: string) => (v: string) => setForm(p => ({ ...p, [k]: v }))
+  const theme = useTheme();
+  const { setToken, setRefreshToken, setUser } = useAuthStore();
 
-  async function handleRegister() {
-    if (!form.name || !form.phone || !form.password) return Alert.alert('Error', 'Please fill in all required fields')
-    setLoading(true)
-    try {
-      const { data } = await authApi.register(form)
-      await setAuth(data.data.user, data.data.tokens.accessToken, '')
-      router.replace('/(tabs)/dashboard')
-    } catch (err: any) {
-      Alert.alert('Registration failed', err.response?.data?.error ?? 'Please try again')
-    } finally {
-      setLoading(false)
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<'FARMER' | 'BUYER'>('FARMER');
+  const [county, setCounty] = useState('');
+  const [showCounties, setShowCounties] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const handleRegister = async () => {
+    if (!name || !phone || !password) {
+      Alert.alert('Missing fields', 'Please fill in all required fields.');
+      return;
     }
-  }
+    setLoading(true);
+    try {
+      const res = await authApi.register({ name, phone, password, role, county });
+      const payload = res.data?.data ?? res.data;
+      const token = payload.tokens?.accessToken || payload.accessToken || payload.token;
+      const refreshToken = payload.tokens?.refreshToken || payload.refreshToken;
+      const user = payload.user;
+      if (!token) throw new Error('No token in register response');
+      setToken(token);
+      if (refreshToken) setRefreshToken(refreshToken);
+      setUser(user);
+      router.replace('/(tabs)/dashboard');
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.response?.data?.error || 'Registration failed.';
+      Alert.alert('Error', msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const s = makeStyles(theme);
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
-      <TouchableOpacity style={s.back} onPress={() => router.back()}>
-        <Ionicons name="arrow-back" size={24} color={colors.gray[700]} />
-      </TouchableOpacity>
+    <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={s.container} keyboardShouldPersistTaps="handled">
+        <TouchableOpacity onPress={() => router.back()} style={s.back}>
+          <Text style={s.backText}>← Back</Text>
+        </TouchableOpacity>
 
-      <View style={s.header}>
-        <View style={s.logoCircle}>
-          <Ionicons name="leaf" size={26} color="#ffffff" />
-        </View>
-        <Text style={s.heading}>Create account</Text>
-        <Text style={s.sub}>Start managing your farm smarter</Text>
-      </View>
+        <Text style={s.title}>Create account</Text>
+        <Text style={s.subtitle}>Join thousands of farmers across East Africa</Text>
 
-      <View style={s.card}>
-        {[
-          { k: 'name',     label: 'Full name *',      placeholder: 'John Kamau',       kb: 'default' as const },
-          { k: 'phone',    label: 'Phone number *',   placeholder: '+254712345678',    kb: 'phone-pad' as const },
-          { k: 'email',    label: 'Email (optional)', placeholder: 'john@example.com', kb: 'email-address' as const },
-        ].map(({ k, label, placeholder, kb }) => (
-          <View key={k} style={s.field}>
-            <Text style={s.label}>{label}</Text>
-            <TextInput
-              style={s.input}
-              placeholder={placeholder}
-              placeholderTextColor={colors.gray[400]}
-              value={(form as any)[k]}
-              onChangeText={f(k)}
-              keyboardType={kb}
-              autoCapitalize="none"
-            />
-          </View>
-        ))}
-
-        <View style={s.field}>
-          <Text style={s.label}>I am a</Text>
-          <View style={s.roleRow}>
-            {['FARMER', 'BUYER', 'AGENT'].map(role => (
-              <TouchableOpacity
-                key={role}
-                style={[s.roleBtn, form.role === role && s.roleBtnActive]}
-                onPress={() => setForm(p => ({ ...p, role }))}>
-                <Text style={[s.roleBtnText, form.role === role && s.roleBtnTextActive]}>
-                  {role === 'FARMER' ? '🌾 Farmer' : role === 'BUYER' ? '🏪 Buyer' : '👤 Agent'}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        <View style={s.field}>
-          <Text style={s.label}>Password *</Text>
-          <View style={s.pwRow}>
-            <TextInput
-              style={[s.input, { flex: 1, borderWidth: 0 }]}
-              placeholder="Min 8 chars, 1 uppercase, 1 number"
-              placeholderTextColor={colors.gray[400]}
-              value={form.password}
-              onChangeText={f('password')}
-              secureTextEntry={!showPw}
-            />
-            <TouchableOpacity onPress={() => setShowPw(!showPw)} style={{ padding: 8 }}>
-              <Ionicons name={showPw ? 'eye-off-outline' : 'eye-outline'} size={18} color={colors.gray[400]} />
+        <View style={s.roleRow}>
+          {(['FARMER', 'BUYER'] as const).map((r) => (
+            <TouchableOpacity
+              key={r}
+              style={[s.roleBtn, role === r && s.roleBtnActive]}
+              onPress={() => setRole(r)}
+            >
+              <Text style={[s.roleText, role === r && s.roleTextActive]}>
+                {r === 'FARMER' ? '🌾 Farmer' : '🛒 Buyer'}
+              </Text>
             </TouchableOpacity>
-          </View>
+          ))}
         </View>
 
-        <TouchableOpacity style={s.btn} onPress={handleRegister} disabled={loading} activeOpacity={0.85}>
-          {loading
-            ? <ActivityIndicator color="#ffffff" />
-            : <Text style={s.btnText}>Create account</Text>}
+        <View style={s.field}>
+          <Text style={s.label}>Full name</Text>
+          <TextInput
+            style={s.input}
+            value={name}
+            onChangeText={setName}
+            placeholder="John Kamau"
+            placeholderTextColor={theme.colors.textMuted}
+            autoCapitalize="words"
+          />
+        </View>
+
+        <View style={s.field}>
+          <Text style={s.label}>Phone number</Text>
+          <TextInput
+            style={s.input}
+            value={phone}
+            onChangeText={setPhone}
+            placeholder="+254712345678"
+            placeholderTextColor={theme.colors.textMuted}
+            keyboardType="phone-pad"
+          />
+        </View>
+
+        <View style={s.field}>
+          <Text style={s.label}>Password</Text>
+          <TextInput
+            style={s.input}
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Min. 8 characters"
+            placeholderTextColor={theme.colors.textMuted}
+            secureTextEntry
+          />
+        </View>
+
+        <View style={s.field}>
+          <Text style={s.label}>County</Text>
+          <TouchableOpacity
+            style={[s.input, s.selectRow]}
+            onPress={() => setShowCounties(!showCounties)}
+          >
+            <Text style={county ? { color: theme.colors.textPrimary } : { color: theme.colors.textMuted }}>
+              {county || 'Select your county'}
+            </Text>
+            <Text style={{ color: theme.colors.textMuted }}>{showCounties ? '▲' : '▼'}</Text>
+          </TouchableOpacity>
+          {showCounties && (
+            <View style={s.dropdown}>
+              {COUNTIES.map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  style={[s.dropdownItem, county === c && s.dropdownItemActive]}
+                  onPress={() => { setCounty(c); setShowCounties(false); }}
+                >
+                  <Text style={[s.dropdownText, county === c && { color: theme.colors.primary }]}>
+                    {c}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
+
+        <TouchableOpacity
+          style={[s.submitBtn, loading && s.submitBtnDisabled]}
+          onPress={handleRegister}
+          disabled={loading}
+          activeOpacity={0.85}
+        >
+          {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.submitText}>Create account</Text>}
         </TouchableOpacity>
 
-        <TouchableOpacity style={{ alignItems: 'center', marginTop: spacing.lg }} onPress={() => router.back()}>
-          <Text style={{ fontSize: 14, color: colors.gray[500] }}>
-            Already have an account? <Text style={{ color: colors.shamba[600], fontWeight: '700' }}>Sign in</Text>
-          </Text>
+        <TouchableOpacity style={s.loginLink} onPress={() => router.push('/(auth)/login')}>
+          <Text style={s.loginLinkText}>Already have an account? Sign in</Text>
         </TouchableOpacity>
-      </View>
-    </ScrollView>
-  )
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
 }
 
-const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.gray[50] },
-  scroll: { padding: spacing.xl, paddingTop: 60 },
-  back: { marginBottom: spacing.xl },
-  header: { alignItems: 'center', marginBottom: spacing['2xl'] },
-  logoCircle: { width: 56, height: 56, borderRadius: 28, backgroundColor: colors.shamba[600], alignItems: 'center', justifyContent: 'center', marginBottom: spacing.md },
-  heading: { fontSize: 24, fontWeight: '700', color: colors.gray[900] },
-  sub: { fontSize: 14, color: colors.gray[500], marginTop: 4 },
-  card: { backgroundColor: '#ffffff', borderRadius: radius['2xl'], padding: spacing['2xl'] },
-  field: { marginBottom: spacing.lg },
-  label: { fontSize: 12, fontWeight: '600', color: colors.gray[700], marginBottom: 6 },
-  input: { borderWidth: 1.5, borderColor: colors.gray[200], borderRadius: radius.lg, height: 48, paddingHorizontal: spacing.md, fontSize: 15, color: colors.gray[900], backgroundColor: colors.gray[50] },
-  pwRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: colors.gray[200], borderRadius: radius.lg, paddingLeft: spacing.md, backgroundColor: colors.gray[50] },
-  roleRow: { flexDirection: 'row', gap: spacing.sm },
-  roleBtn: { flex: 1, borderWidth: 1.5, borderColor: colors.gray[200], borderRadius: radius.lg, paddingVertical: 10, alignItems: 'center' },
-  roleBtnActive: { borderColor: colors.shamba[600], backgroundColor: colors.shamba[50] },
-  roleBtnText: { fontSize: 12, color: colors.gray[600], fontWeight: '500' },
-  roleBtnTextActive: { color: colors.shamba[700], fontWeight: '700' },
-  btn: { backgroundColor: colors.shamba[600], borderRadius: radius.lg, height: 52, alignItems: 'center', justifyContent: 'center', marginTop: spacing.md },
-  btnText: { fontSize: 16, fontWeight: '700', color: '#ffffff' },
-})
+const makeStyles = (theme: ReturnType<typeof import('../../src/lib/theme').useTheme>) =>
+  StyleSheet.create({
+    flex: { flex: 1, backgroundColor: theme.colors.background },
+    container: { flexGrow: 1, padding: 20 },
+    back: { marginTop: 10, marginBottom: 20 },
+    backText: { fontSize: 15, color: theme.colors.primary },
+    title: { fontSize: 26, fontWeight: '700', color: theme.colors.textPrimary, letterSpacing: -0.5 },
+    subtitle: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 4, marginBottom: 22 },
+    roleRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
+    roleBtn: {
+      flex: 1, paddingVertical: 12, borderRadius: theme.radius.md,
+      borderWidth: 0.5, borderColor: theme.colors.border,
+      alignItems: 'center', backgroundColor: theme.colors.cardBg,
+    },
+    roleBtnActive: { backgroundColor: theme.colors.primaryLight, borderColor: theme.colors.primary },
+    roleText: { fontSize: 14, color: theme.colors.textSecondary, fontWeight: '500' },
+    roleTextActive: { color: theme.colors.primary },
+    field: { marginBottom: 14 },
+    label: { fontSize: 12, fontWeight: '500', color: theme.colors.textSecondary, marginBottom: 6 },
+    input: {
+      backgroundColor: theme.colors.cardBg, borderWidth: 0.5, borderColor: theme.colors.border,
+      borderRadius: theme.radius.sm, paddingHorizontal: 14, paddingVertical: 12,
+      fontSize: 15, color: theme.colors.textPrimary,
+    },
+    selectRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    dropdown: {
+      borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: theme.radius.sm,
+      backgroundColor: theme.colors.cardBg, marginTop: 4, maxHeight: 200, overflow: 'scroll',
+    },
+    dropdownItem: { paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border },
+    dropdownItemActive: { backgroundColor: theme.colors.primaryLight },
+    dropdownText: { fontSize: 14, color: theme.colors.textPrimary },
+    submitBtn: { backgroundColor: theme.colors.primary, borderRadius: theme.radius.md, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
+    submitBtnDisabled: { opacity: 0.6 },
+    submitText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+    loginLink: { alignItems: 'center', marginTop: 16 },
+    loginLinkText: { fontSize: 13, color: theme.colors.primary },
+  });
